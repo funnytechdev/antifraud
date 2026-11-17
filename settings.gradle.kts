@@ -13,3 +13,4 @@ rootProject.name = "antifraud"
 
 include("contracts")
 include("transaction-generator")
+include("antifraud-service")
