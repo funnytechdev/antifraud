@@ -17,11 +17,18 @@ public record GeneratorProperties(
         Duration tick,
         double fraudProbability,
         WorldSettings world,
-        TopicSettings topics) {
+        TopicSettings topics,
+        FeedSettings blacklistFeed) {
 
     public record WorldSettings(int customers, int merchants, int compromisedCards, int fraudMerchants) {
     }
 
     public record TopicSettings(String transactions, String labels, int partitions) {
+    }
+
+    /**
+     * @param baseUrl base URL of the antifraud service API that receives the blacklist
+     */
+    public record FeedSettings(boolean enabled, String baseUrl, int maxAttempts, Duration retryDelay) {
     }
 }

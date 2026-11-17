@@ -11,6 +11,7 @@ dependencies {
     implementation(project(":contracts"))
     implementation("org.springframework.boot:spring-boot-starter-kafka")
     implementation("org.springframework.boot:spring-boot-starter-jackson")
+    implementation("org.springframework.boot:spring-boot-starter-restclient")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

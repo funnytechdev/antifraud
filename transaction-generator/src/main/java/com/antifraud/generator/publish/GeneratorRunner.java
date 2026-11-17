@@ -4,18 +4,21 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
-/** Starts the transaction stream once the application is up. */
+/** Delivers the blacklist first, then starts the transaction stream. */
 @Component
 class GeneratorRunner implements ApplicationRunner {
 
+    private final BlacklistFeed blacklistFeed;
     private final TransactionEmitter emitter;
 
-    GeneratorRunner(TransactionEmitter emitter) {
+    GeneratorRunner(BlacklistFeed blacklistFeed, TransactionEmitter emitter) {
+        this.blacklistFeed = blacklistFeed;
         this.emitter = emitter;
     }
 
     @Override
-    public void run(ApplicationArguments args) {
+    public void run(ApplicationArguments args) throws InterruptedException {
+        blacklistFeed.publish();
         emitter.start();
     }
 }
