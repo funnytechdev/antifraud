@@ -12,3 +12,4 @@ dependencyResolutionManagement {
 rootProject.name = "antifraud"
 
 include("contracts")
+include("transaction-generator")
