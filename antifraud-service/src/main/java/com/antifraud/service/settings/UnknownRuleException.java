@@ -1,12 +1,11 @@
 package com.antifraud.service.settings;
 
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.server.ResponseStatusException;
 
-@ResponseStatus(HttpStatus.NOT_FOUND)
-public class UnknownRuleException extends RuntimeException {
+public class UnknownRuleException extends ResponseStatusException {
 
     public UnknownRuleException(String code) {
-        super("Unknown rule: " + code);
+        super(HttpStatus.NOT_FOUND, "Unknown rule: " + code);
     }
 }
