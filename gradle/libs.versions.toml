@@ -1,5 +1,9 @@
 [versions]
 spring-boot = "4.1.2"
+resilience4j = "2.4.0"
+
+[libraries]
+resilience4j-spring-boot = { module = "io.github.resilience4j:resilience4j-spring-boot4", version.ref = "resilience4j" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }

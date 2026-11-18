@@ -14,11 +14,19 @@ public sealed interface RuleResult {
         return new Fired(reason);
     }
 
+    static RuleResult unavailable(String cause) {
+        return new Unavailable(cause);
+    }
+
     /** The rule has no objections. */
     enum Passed implements RuleResult {
         INSTANCE
     }
 
     record Fired(String reason) implements RuleResult {
+    }
+
+    /** The rule could not be evaluated, e.g. because Redis is down. */
+    record Unavailable(String cause) implements RuleResult {
     }
 }

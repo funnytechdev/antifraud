@@ -29,10 +29,12 @@ public class ImpossibleTravelRule implements FraudRule<ImpossibleTravelRule.Para
             RedisScript.of(new ClassPathResource("redis/last-location.lua"), List.class);
 
     private final StringRedisTemplate redis;
+    private final RedisGuard guard;
     private final Duration stateTtl;
 
-    public ImpossibleTravelRule(StringRedisTemplate redis, StateProperties state) {
+    public ImpossibleTravelRule(StringRedisTemplate redis, RedisGuard guard, StateProperties state) {
         this.redis = redis;
+        this.guard = guard;
         this.stateTtl = state.locationTtl();
     }
 
@@ -49,14 +51,14 @@ public class ImpossibleTravelRule implements FraudRule<ImpossibleTravelRule.Para
     @Override
     public RuleResult evaluate(TransactionEvent transaction, Parameters parameters) {
         @SuppressWarnings("unchecked")
-        List<String> previous = redis.execute(SCRIPT,
+        List<String> previous = guard.call(() -> redis.execute(SCRIPT,
                 List.of(key(transaction.cardId())),
                 transaction.transactionId().toString(),
                 Double.toString(transaction.latitude()),
                 Double.toString(transaction.longitude()),
                 Long.toString(transaction.timestamp().toEpochMilli()),
                 transaction.city(),
-                Long.toString(stateTtl.toMillis()));
+                Long.toString(stateTtl.toMillis())));
         if (previous == null || previous.isEmpty()) {
             return RuleResult.passed();
         }

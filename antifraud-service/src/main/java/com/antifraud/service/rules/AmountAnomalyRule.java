@@ -41,10 +41,12 @@ public class AmountAnomalyRule implements FraudRule<AmountAnomalyRule.Parameters
             RedisScript.of(new ClassPathResource("redis/amount-stats.lua"), List.class);
 
     private final StringRedisTemplate redis;
+    private final RedisGuard guard;
     private final Duration stateTtl;
 
-    public AmountAnomalyRule(StringRedisTemplate redis, StateProperties state) {
+    public AmountAnomalyRule(StringRedisTemplate redis, RedisGuard guard, StateProperties state) {
         this.redis = redis;
+        this.guard = guard;
         this.stateTtl = state.amountStatsTtl();
     }
 
@@ -62,11 +64,11 @@ public class AmountAnomalyRule implements FraudRule<AmountAnomalyRule.Parameters
     public RuleResult evaluate(TransactionEvent transaction, Parameters parameters) {
         double logAmount = Math.log(transaction.amount().doubleValue());
         @SuppressWarnings("unchecked")
-        List<String> before = redis.execute(SCRIPT,
+        List<String> before = guard.call(() -> redis.execute(SCRIPT,
                 List.of(key(transaction.customerId())),
                 transaction.transactionId().toString(),
                 Double.toString(logAmount),
-                Long.toString(stateTtl.toMillis()));
+                Long.toString(stateTtl.toMillis())));
         if (before == null || before.size() < 3) {
             return RuleResult.passed();
         }

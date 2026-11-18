@@ -12,9 +12,11 @@ public class BlacklistedMerchantRule implements FraudRule<NoParameters> {
     public static final String CODE = "BLACKLISTED_MERCHANT";
 
     private final BlacklistService blacklist;
+    private final RedisGuard guard;
 
-    public BlacklistedMerchantRule(BlacklistService blacklist) {
+    public BlacklistedMerchantRule(BlacklistService blacklist, RedisGuard guard) {
         this.blacklist = blacklist;
+        this.guard = guard;
     }
 
     @Override
@@ -29,7 +31,7 @@ public class BlacklistedMerchantRule implements FraudRule<NoParameters> {
 
     @Override
     public RuleResult evaluate(TransactionEvent transaction, NoParameters parameters) {
-        if (!blacklist.contains(BlacklistType.MERCHANT, transaction.merchantId())) {
+        if (!guard.call(() -> blacklist.contains(BlacklistType.MERCHANT, transaction.merchantId()))) {
             return RuleResult.passed();
         }
         return RuleResult.fired("Merchant %s is on the list of suspicious merchants"

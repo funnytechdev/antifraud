@@ -8,6 +8,7 @@ import com.antifraud.service.TestTransactions;
 import com.antifraud.service.rules.FraudRule;
 import com.antifraud.service.rules.NoParameters;
 import com.antifraud.service.rules.RuleResult;
+import com.antifraud.service.rules.StateUnavailableException;
 import com.antifraud.service.settings.ActiveRule;
 import com.antifraud.service.settings.InvalidSettingsException;
 import com.antifraud.service.settings.ScoringSettings;
@@ -16,12 +17,16 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
+import static com.antifraud.service.TestTransactions.newCardId;
+import static com.antifraud.service.TestTransactions.purchase;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -29,6 +34,8 @@ class DecisionEngineTest {
 
     private static final Instant NOW = Instant.parse("2026-03-01T10:00:05.123456789Z");
     private static final ScoringSettings SCORING = new ScoringSettings(40, 80, NOW);
+    private static final DegradationProperties REVIEW_FROM_5000 =
+            new DegradationProperties(Verdict.REVIEW, new BigDecimal("5000"));
 
     private final TransactionEvent transaction =
             TestTransactions.purchase("card-1", Instant.parse("2026-03-01T10:00:00.987654321Z"));
@@ -71,7 +78,7 @@ class DecisionEngineTest {
     void newSettingsApplyToTheNextTransaction() {
         AtomicReference<SettingsSnapshot> settings =
                 new AtomicReference<>(new SettingsSnapshot(SCORING, List.of(rule(firing("A"), 50))));
-        DecisionEngine engine = new DecisionEngine(settings::get, Clock.fixed(NOW, ZoneOffset.UTC));
+        DecisionEngine engine = new DecisionEngine(settings::get, REVIEW_FROM_5000, Clock.fixed(NOW, ZoneOffset.UTC));
 
         Verdict before = engine.decide(transaction).verdict();
         settings.set(new SettingsSnapshot(new ScoringSettings(60, 90, NOW), List.of(rule(firing("A"), 50))));
@@ -102,9 +109,53 @@ class DecisionEngineTest {
         assertThatThrownBy(() -> new ScoringSettings(90, 80, NOW)).isInstanceOf(InvalidSettingsException.class);
     }
 
+    @Test
+    void largePurchaseGetsTheFallbackVerdictWhenRulesAreUnavailable() {
+        DecisionEvent decision = engine(rule(unavailable("A"), 50), rule(unavailable("B"), 100), rule(silent("C"), 30))
+                .decide(purchase(newCardId()).amount("5000").build());
+
+        assertThat(decision.verdict()).isEqualTo(Verdict.REVIEW);
+        assertThat(decision.riskScore()).isZero();
+        assertThat(decision.triggeredRules()).containsExactly(new RuleHit(DecisionEngine.DEGRADED, 0,
+                "Not evaluated: A, B (Redis is unavailable: connection refused); fallback verdict for this amount: REVIEW"));
+    }
+
+    @Test
+    void smallPurchaseIsDecidedByTheRemainingRules() {
+        DecisionEvent decision = engine(rule(unavailable("A"), 50), rule(silent("C"), 30))
+                .decide(purchase(newCardId()).amount("4999.99").build());
+
+        assertThat(decision.verdict()).isEqualTo(Verdict.ALLOW);
+        assertThat(decision.triggeredRules()).extracting(RuleHit::rule).containsExactly(DecisionEngine.DEGRADED);
+    }
+
+    @Test
+    void remainingRulesCanMakeTheVerdictStricterThanTheFallback() {
+        DecisionEvent decision = engine(rule(unavailable("A"), 50), rule(firing("C"), 90))
+                .decide(purchase(newCardId()).amount("100").build());
+
+        assertThat(decision.verdict()).isEqualTo(Verdict.BLOCK);
+        assertThat(decision.riskScore()).isEqualTo(90);
+        assertThat(decision.triggeredRules()).extracting(RuleHit::rule).containsExactly("C", DecisionEngine.DEGRADED);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"ALLOW, ALLOW", "REVIEW, REVIEW", "BLOCK, BLOCK"})
+    void fallbackVerdictIsConfigurable(Verdict fallback, Verdict expected) {
+        DegradationProperties degradation = new DegradationProperties(fallback, BigDecimal.ZERO);
+
+        DecisionEvent decision = engine(degradation, rule(unavailable("A"), 50)).decide(transaction);
+
+        assertThat(decision.verdict()).isEqualTo(expected);
+    }
+
     private static DecisionEngine engine(ActiveRule... rules) {
+        return engine(REVIEW_FROM_5000, rules);
+    }
+
+    private static DecisionEngine engine(DegradationProperties degradation, ActiveRule... rules) {
         SettingsSnapshot snapshot = new SettingsSnapshot(SCORING, List.of(rules));
-        return new DecisionEngine(() -> snapshot, Clock.fixed(NOW, ZoneOffset.UTC));
+        return new DecisionEngine(() -> snapshot, degradation, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private static ActiveRule rule(FraudRule<NoParameters> rule, int score) {
@@ -119,8 +170,13 @@ class DecisionEngineTest {
         return new StubRule(code, () -> RuleResult.fired(code + " fired"));
     }
 
-    private record StubRule(String code, java.util.function.Supplier<RuleResult> result)
-            implements FraudRule<NoParameters> {
+    private static FraudRule<NoParameters> unavailable(String code) {
+        return new StubRule(code, () -> {
+            throw new StateUnavailableException("Redis is unavailable: connection refused", null);
+        });
+    }
+
+    private record StubRule(String code, Supplier<RuleResult> result) implements FraudRule<NoParameters> {
 
         @Override
         public Class<NoParameters> parametersType() {

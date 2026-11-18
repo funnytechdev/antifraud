@@ -25,10 +25,12 @@ public class VelocityRule implements FraudRule<VelocityRule.Parameters> {
             RedisScript.of(new ClassPathResource("redis/velocity.lua"), Long.class);
 
     private final StringRedisTemplate redis;
+    private final RedisGuard guard;
     private final Duration stateTtl;
 
-    public VelocityRule(StringRedisTemplate redis, StateProperties state) {
+    public VelocityRule(StringRedisTemplate redis, RedisGuard guard, StateProperties state) {
         this.redis = redis;
+        this.guard = guard;
         this.stateTtl = state.velocityTtl();
     }
 
@@ -45,13 +47,13 @@ public class VelocityRule implements FraudRule<VelocityRule.Parameters> {
     @Override
     public RuleResult evaluate(TransactionEvent transaction, Parameters parameters) {
         Duration window = Duration.ofSeconds(parameters.windowSeconds());
-        Long count = redis.execute(SCRIPT,
+        Long count = guard.call(() -> redis.execute(SCRIPT,
                 List.of(key(transaction.cardId())),
                 String.valueOf(transaction.timestamp().toEpochMilli()),
                 String.valueOf(window.toMillis()),
                 transaction.transactionId().toString(),
                 // The window can be made longer through the API than the configured time to live.
-                String.valueOf(Math.max(stateTtl.toMillis(), window.toMillis())));
+                String.valueOf(Math.max(stateTtl.toMillis(), window.toMillis()))));
 
         if (count == null || count < parameters.threshold()) {
             return RuleResult.passed();

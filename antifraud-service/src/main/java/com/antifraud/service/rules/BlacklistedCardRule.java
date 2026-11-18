@@ -12,9 +12,11 @@ public class BlacklistedCardRule implements FraudRule<NoParameters> {
     public static final String CODE = "BLACKLISTED_CARD";
 
     private final BlacklistService blacklist;
+    private final RedisGuard guard;
 
-    public BlacklistedCardRule(BlacklistService blacklist) {
+    public BlacklistedCardRule(BlacklistService blacklist, RedisGuard guard) {
         this.blacklist = blacklist;
+        this.guard = guard;
     }
 
     @Override
@@ -29,7 +31,7 @@ public class BlacklistedCardRule implements FraudRule<NoParameters> {
 
     @Override
     public RuleResult evaluate(TransactionEvent transaction, NoParameters parameters) {
-        if (!blacklist.contains(BlacklistType.CARD, transaction.cardId())) {
+        if (!guard.call(() -> blacklist.contains(BlacklistType.CARD, transaction.cardId()))) {
             return RuleResult.passed();
         }
         return RuleResult.fired("The card is on the list of compromised cards");
