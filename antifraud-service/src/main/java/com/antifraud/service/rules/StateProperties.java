@@ -10,7 +10,8 @@ import java.time.Duration;
  * <p>Unlike rule parameters these are not business settings: they only bound the memory Redis uses.
  *
  * @param velocityTtl time to live of the purchase window of an idle card
+ * @param locationTtl time to live of the last location of an idle card
  */
 @ConfigurationProperties("antifraud.state")
-public record StateProperties(Duration velocityTtl) {
+public record StateProperties(Duration velocityTtl, Duration locationTtl) {
 }
