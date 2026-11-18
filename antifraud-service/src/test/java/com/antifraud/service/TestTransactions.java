@@ -39,6 +39,7 @@ public final class TestTransactions {
                 "Moscow",
                 55.7558,
                 37.6173,
-                timestamp);
+                timestamp,
+                "Europe/Moscow");
     }
 }

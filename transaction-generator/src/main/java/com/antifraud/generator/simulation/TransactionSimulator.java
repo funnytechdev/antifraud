@@ -150,7 +150,8 @@ public final class TransactionSimulator {
                     city.name(),
                     city.latitude(),
                     city.longitude(),
-                    at);
+                    at,
+                    city.timeZone().getId());
             return new LabeledTransaction(event, scenario);
         }
     }

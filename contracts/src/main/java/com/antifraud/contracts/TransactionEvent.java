@@ -14,6 +14,8 @@ import java.util.UUID;
  * @param transactionId unique id of the operation, used for idempotent processing
  * @param cardId        card token (never the real card number)
  * @param timestamp     moment of the purchase (event time), not the moment of processing
+ * @param timeZone      IANA time zone of the merchant, e.g. {@code Asia/Novosibirsk}; card networks send the
+ *                      local time of a transaction alongside the UTC one, which this field stands for
  */
 public record TransactionEvent(
         UUID transactionId,
@@ -26,7 +28,8 @@ public record TransactionEvent(
         String city,
         double latitude,
         double longitude,
-        Instant timestamp) {
+        Instant timestamp,
+        String timeZone) {
 
     public TransactionEvent {
         Objects.requireNonNull(transactionId, "transactionId");
@@ -37,5 +40,6 @@ public record TransactionEvent(
         Objects.requireNonNull(merchantId, "merchantId");
         Objects.requireNonNull(mcc, "mcc");
         Objects.requireNonNull(timestamp, "timestamp");
+        Objects.requireNonNull(timeZone, "timeZone");
     }
 }
