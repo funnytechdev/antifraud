@@ -1,5 +1,7 @@
 package com.antifraud.generator.world;
 
+import java.util.Set;
+
 /**
  * Merchant categories with their MCC codes.
  *
@@ -19,6 +21,12 @@ public enum MerchantCategory {
     JEWELRY("5944", 20.0, 1),
     QUASI_CASH("6051", 8.0, 1),
     GAMBLING("7995", 3.0, 1);
+
+    /** Categories where stolen money is easiest to turn into cash. */
+    public static final Set<MerchantCategory> CASH_OUT = Set.of(MONEY_TRANSFER, JEWELRY, QUASI_CASH, GAMBLING);
+
+    /** Categories where a single purchase can be worth a lot and is easy to resell. */
+    public static final Set<MerchantCategory> HIGH_VALUE = Set.of(ELECTRONICS, JEWELRY);
 
     private final String mcc;
     private final double amountFactor;

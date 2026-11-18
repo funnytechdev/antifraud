@@ -26,6 +26,15 @@ public record City(String name, double latitude, double longitude, ZoneId timeZo
             city("Kaliningrad", 54.7104, 20.4522, "Europe/Kaliningrad", 1),
             city("Sochi", 43.6028, 39.7342, "Europe/Moscow", 1));
 
+    /** Great-circle distance by the haversine formula. */
+    public double distanceKm(City other) {
+        double deltaPhi = Math.toRadians(other.latitude - latitude);
+        double deltaLambda = Math.toRadians(other.longitude - longitude);
+        double h = Math.pow(Math.sin(deltaPhi / 2), 2) + Math.cos(Math.toRadians(latitude))
+                * Math.cos(Math.toRadians(other.latitude)) * Math.pow(Math.sin(deltaLambda / 2), 2);
+        return 2 * 6371.0088 * Math.asin(Math.min(1.0, Math.sqrt(h)));
+    }
+
     private static City city(String name, double latitude, double longitude, String timeZone, int weight) {
         return new City(name, latitude, longitude, ZoneId.of(timeZone), weight);
     }

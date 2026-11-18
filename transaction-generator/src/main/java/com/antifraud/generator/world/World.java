@@ -3,6 +3,7 @@ package com.antifraud.generator.world;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.ToIntFunction;
 import java.util.random.RandomGenerator;
 import java.util.stream.Collectors;
@@ -97,6 +98,13 @@ public final class World {
 
     public List<Merchant> merchantsIn(City city) {
         return merchantsByCity.get(city);
+    }
+
+    /** Honest merchants of the given categories in the city; may be empty. */
+    public List<Merchant> merchantsIn(City city, Set<MerchantCategory> categories) {
+        return merchantsByCity.get(city).stream()
+                .filter(merchant -> categories.contains(merchant.category()))
+                .toList();
     }
 
     private static <T> T pickWeighted(List<T> items, ToIntFunction<T> weight, RandomGenerator random) {
