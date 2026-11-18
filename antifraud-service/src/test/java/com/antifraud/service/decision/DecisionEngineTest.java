@@ -6,6 +6,12 @@ import com.antifraud.contracts.TransactionEvent;
 import com.antifraud.contracts.Verdict;
 import com.antifraud.service.TestTransactions;
 import com.antifraud.service.rules.FraudRule;
+import com.antifraud.service.rules.NoParameters;
+import com.antifraud.service.rules.RuleResult;
+import com.antifraud.service.settings.ActiveRule;
+import com.antifraud.service.settings.InvalidSettingsException;
+import com.antifraud.service.settings.ScoringSettings;
+import com.antifraud.service.settings.SettingsSnapshot;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -14,22 +20,22 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DecisionEngineTest {
 
-    private static final Instant NOW = Instant.parse("2026-03-01T10:00:05Z");
-    private static final ScoringProperties SCORING = new ScoringProperties(40, 80);
+    private static final Instant NOW = Instant.parse("2026-03-01T10:00:05.123456789Z");
+    private static final ScoringSettings SCORING = new ScoringSettings(40, 80, NOW);
 
     private final TransactionEvent transaction =
-            TestTransactions.purchase("card-1", Instant.parse("2026-03-01T10:00:00Z"));
+            TestTransactions.purchase("card-1", Instant.parse("2026-03-01T10:00:00.987654321Z"));
 
     @Test
     void transactionWithoutTriggeredRulesIsAllowed() {
-        DecisionEvent decision = engine(silent("A"), silent("B")).decide(transaction);
+        DecisionEvent decision = engine(rule(silent("A"), 30), rule(silent("B"), 60)).decide(transaction);
 
         assertThat(decision.verdict()).isEqualTo(Verdict.ALLOW);
         assertThat(decision.riskScore()).isZero();
@@ -37,8 +43,9 @@ class DecisionEngineTest {
     }
 
     @Test
-    void scoresOfTriggeredRulesAreSummedUpAndKeptForExplanation() {
-        DecisionEvent decision = engine(firing("A", 30), silent("B"), firing("C", 60)).decide(transaction);
+    void scoresFromSettingsAreSummedUpAndKeptForExplanation() {
+        DecisionEvent decision = engine(rule(firing("A"), 30), rule(silent("B"), 100), rule(firing("C"), 60))
+                .decide(transaction);
 
         assertThat(decision.verdict()).isEqualTo(Verdict.BLOCK);
         assertThat(decision.riskScore()).isEqualTo(90);
@@ -48,13 +55,40 @@ class DecisionEngineTest {
     }
 
     @Test
-    void decisionCarriesEventTimeOfTransactionAndTimeOfDecision() {
+    void disabledRuleIsNotEvaluated() {
+        FraudRule<NoParameters> mustNotRun = new StubRule("A", () -> {
+            throw new AssertionError("A disabled rule was evaluated");
+        });
+        ActiveRule disabled = new ActiveRule(mustNotRun, false, 100, new NoParameters(), NOW);
+
+        DecisionEvent decision = engine(disabled, rule(firing("B"), 40)).decide(transaction);
+
+        assertThat(decision.verdict()).isEqualTo(Verdict.REVIEW);
+        assertThat(decision.triggeredRules()).extracting(RuleHit::rule).containsExactly("B");
+    }
+
+    @Test
+    void newSettingsApplyToTheNextTransaction() {
+        AtomicReference<SettingsSnapshot> settings =
+                new AtomicReference<>(new SettingsSnapshot(SCORING, List.of(rule(firing("A"), 50))));
+        DecisionEngine engine = new DecisionEngine(settings::get, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        Verdict before = engine.decide(transaction).verdict();
+        settings.set(new SettingsSnapshot(new ScoringSettings(60, 90, NOW), List.of(rule(firing("A"), 50))));
+        Verdict after = engine.decide(transaction).verdict();
+
+        assertThat(before).isEqualTo(Verdict.REVIEW);
+        assertThat(after).isEqualTo(Verdict.ALLOW);
+    }
+
+    @Test
+    void decisionCarriesEventTimeOfTransactionAndTimeOfDecisionInMicroseconds() {
         DecisionEvent decision = engine().decide(transaction);
 
         assertThat(decision.transactionId()).isEqualTo(transaction.transactionId());
         assertThat(decision.cardId()).isEqualTo(transaction.cardId());
-        assertThat(decision.eventTime()).isEqualTo(transaction.timestamp());
-        assertThat(decision.decidedAt()).isEqualTo(NOW);
+        assertThat(decision.eventTime()).isEqualTo(Instant.parse("2026-03-01T10:00:00.987654Z"));
+        assertThat(decision.decidedAt()).isEqualTo(Instant.parse("2026-03-01T10:00:05.123456Z"));
     }
 
     @ParameterizedTest
@@ -65,26 +99,37 @@ class DecisionEngineTest {
 
     @Test
     void reviewThresholdAboveBlockThresholdIsRejected() {
-        assertThatIllegalArgumentException().isThrownBy(() -> new ScoringProperties(90, 80));
+        assertThatThrownBy(() -> new ScoringSettings(90, 80, NOW)).isInstanceOf(InvalidSettingsException.class);
     }
 
-    private static DecisionEngine engine(FraudRule... rules) {
-        return new DecisionEngine(List.of(rules), SCORING, Clock.fixed(NOW, ZoneOffset.UTC));
+    private static DecisionEngine engine(ActiveRule... rules) {
+        SettingsSnapshot snapshot = new SettingsSnapshot(SCORING, List.of(rules));
+        return new DecisionEngine(() -> snapshot, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
-    private static FraudRule silent(String code) {
-        return new StubRule(code, Optional.empty());
+    private static ActiveRule rule(FraudRule<NoParameters> rule, int score) {
+        return new ActiveRule(rule, true, score, new NoParameters(), NOW);
     }
 
-    private static FraudRule firing(String code, int score) {
-        return new StubRule(code, Optional.of(new RuleHit(code, score, code + " fired")));
+    private static FraudRule<NoParameters> silent(String code) {
+        return new StubRule(code, RuleResult::passed);
     }
 
-    private record StubRule(String code, Optional<RuleHit> result) implements FraudRule {
+    private static FraudRule<NoParameters> firing(String code) {
+        return new StubRule(code, () -> RuleResult.fired(code + " fired"));
+    }
+
+    private record StubRule(String code, java.util.function.Supplier<RuleResult> result)
+            implements FraudRule<NoParameters> {
 
         @Override
-        public Optional<RuleHit> evaluate(TransactionEvent transaction) {
-            return result;
+        public Class<NoParameters> parametersType() {
+            return NoParameters.class;
+        }
+
+        @Override
+        public RuleResult evaluate(TransactionEvent transaction, NoParameters parameters) {
+            return result.get();
         }
     }
 }

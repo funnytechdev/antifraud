@@ -1,15 +1,13 @@
 package com.antifraud.service.rules;
 
-import com.antifraud.contracts.RuleHit;
 import com.antifraud.contracts.TransactionEvent;
-import com.antifraud.service.rules.RuleProperties.Velocity;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.List;
-import java.util.Optional;
 
 /**
  * Fires when a card makes too many purchases within a short time, which is typical for card
@@ -19,7 +17,7 @@ import java.util.Optional;
  * from the moment of processing, so the result does not depend on how far the consumer lags.
  */
 @Component
-public class VelocityRule implements FraudRule {
+public class VelocityRule implements FraudRule<VelocityRule.Parameters> {
 
     public static final String CODE = "VELOCITY";
 
@@ -27,11 +25,11 @@ public class VelocityRule implements FraudRule {
             RedisScript.of(new ClassPathResource("redis/velocity.lua"), Long.class);
 
     private final StringRedisTemplate redis;
-    private final Velocity settings;
+    private final Duration stateTtl;
 
-    public VelocityRule(StringRedisTemplate redis, RuleProperties properties) {
+    public VelocityRule(StringRedisTemplate redis, StateProperties state) {
         this.redis = redis;
-        this.settings = properties.velocity();
+        this.stateTtl = state.velocityTtl();
     }
 
     @Override
@@ -40,23 +38,47 @@ public class VelocityRule implements FraudRule {
     }
 
     @Override
-    public Optional<RuleHit> evaluate(TransactionEvent transaction) {
+    public Class<Parameters> parametersType() {
+        return Parameters.class;
+    }
+
+    @Override
+    public RuleResult evaluate(TransactionEvent transaction, Parameters parameters) {
+        Duration window = Duration.ofSeconds(parameters.windowSeconds());
         Long count = redis.execute(SCRIPT,
                 List.of(key(transaction.cardId())),
                 String.valueOf(transaction.timestamp().toEpochMilli()),
-                String.valueOf(settings.window().toMillis()),
+                String.valueOf(window.toMillis()),
                 transaction.transactionId().toString(),
-                String.valueOf(settings.stateTtl().toMillis()));
+                // The window can be made longer through the API than the configured time to live.
+                String.valueOf(Math.max(stateTtl.toMillis(), window.toMillis())));
 
-        if (count == null || count < settings.threshold()) {
-            return Optional.empty();
+        if (count == null || count < parameters.threshold()) {
+            return RuleResult.passed();
         }
-        return Optional.of(new RuleHit(CODE, settings.score(),
-                "%d transactions on the card within %d seconds".formatted(count, settings.window().toSeconds())));
+        return RuleResult.fired("%d transactions on the card within %d seconds"
+                .formatted(count, parameters.windowSeconds()));
     }
 
     /** The card id is wrapped in a hash tag so the key stays on one node in Redis Cluster. */
     private static String key(String cardId) {
         return "velocity:{" + cardId + "}";
+    }
+
+    /**
+     * @param threshold     number of transactions within the window, the current one included, at
+     *                      which the rule fires
+     * @param windowSeconds length of the sliding window in seconds of event time
+     */
+    public record Parameters(int threshold, int windowSeconds) {
+
+        public Parameters {
+            if (threshold < 2) {
+                throw new IllegalArgumentException("threshold must be at least 2");
+            }
+            if (windowSeconds < 1 || windowSeconds > 86_400) {
+                throw new IllegalArgumentException("windowSeconds must be between 1 and 86400");
+            }
+        }
     }
 }
