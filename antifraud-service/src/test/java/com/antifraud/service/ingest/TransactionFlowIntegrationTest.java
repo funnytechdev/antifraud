@@ -24,6 +24,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -165,13 +166,31 @@ class TransactionFlowIntegrationTest {
 
         send(transaction);
 
-        ConsumerRecord<String, String> record = awaitDecisionRecord(cardId);
+        ConsumerRecord<String, String> record = awaitDecisionRecords(cardId, 1).getFirst();
         DecisionEvent decision = json.readValue(record.value(), DecisionEvent.class);
         assertThat(decision.transactionId()).isEqualTo(transaction.transactionId());
         assertThat(decision.verdict()).isEqualTo(Verdict.BLOCK);
         assertThat(decision.riskScore()).isEqualTo(100);
         assertThat(decision.triggeredRules()).extracting(RuleHit::rule).containsExactly(BlacklistedCardRule.CODE);
         assertThat(decision.eventTime()).isEqualTo(START);
+    }
+
+    @Test
+    void redeliveredTransactionGetsTheDecisionItWasGivenTheFirstTime() {
+        String cardId = newCardId();
+        TransactionEvent transaction = purchase(cardId, START);
+        send(transaction);
+        StoredDecision first = awaitDecision(transaction);
+        // Had the transaction been scored again, the blacklisted card would now be blocked.
+        blacklist.add(BlacklistType.CARD, List.of(cardId));
+
+        send(transaction);
+
+        List<DecisionEvent> published = awaitDecisionRecords(cardId, 2).stream()
+                .map(record -> json.readValue(record.value(), DecisionEvent.class))
+                .toList();
+        assertThat(published).containsOnly(first.toEvent());
+        assertThat(decisions.findLatest(cardId, null, 10)).containsExactly(first);
     }
 
     private void send(TransactionEvent transaction) {
@@ -184,22 +203,25 @@ class TransactionFlowIntegrationTest {
                 .orElseThrow();
     }
 
-    private ConsumerRecord<String, String> awaitDecisionRecord(String cardId) {
+    /** Reads the decisions topic from the beginning until {@code count} records of the card are found. */
+    private List<ConsumerRecord<String, String>> awaitDecisionRecords(String cardId, int count) {
         Map<String, Object> config = Map.of(
                 ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaContainer.getBootstrapServers(),
                 ConsumerConfig.GROUP_ID_CONFIG, "test-" + UUID.randomUUID(),
                 ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        List<ConsumerRecord<String, String>> found = new ArrayList<>();
         try (var consumer = new KafkaConsumer<>(config, new StringDeserializer(), new StringDeserializer())) {
             consumer.subscribe(List.of(topics.decisions()));
             Instant deadline = Instant.now().plus(TIMEOUT);
-            while (Instant.now().isBefore(deadline)) {
+            while (found.size() < count && Instant.now().isBefore(deadline)) {
                 for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(500))) {
                     if (cardId.equals(record.key())) {
-                        return record;
+                        found.add(record);
                     }
                 }
             }
         }
-        throw new AssertionError("No decision for card %s in topic %s".formatted(cardId, topics.decisions()));
+        assertThat(found).as("decisions of card %s in topic %s", cardId, topics.decisions()).hasSize(count);
+        return found;
     }
 }

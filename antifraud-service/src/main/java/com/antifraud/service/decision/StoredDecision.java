@@ -1,5 +1,6 @@
 package com.antifraud.service.decision;
 
+import com.antifraud.contracts.DecisionEvent;
 import com.antifraud.contracts.RuleHit;
 import com.antifraud.contracts.Verdict;
 
@@ -22,4 +23,9 @@ public record StoredDecision(
         List<RuleHit> triggeredRules,
         Instant eventTime,
         Instant decidedAt) {
+
+    /** The decision exactly as it was published the first time. */
+    public DecisionEvent toEvent() {
+        return new DecisionEvent(transactionId, cardId, verdict, riskScore, triggeredRules, eventTime, decidedAt);
+    }
 }
